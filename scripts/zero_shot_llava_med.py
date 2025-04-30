@@ -153,7 +153,8 @@ def main():
                 "vision_tower": args.vision_tower,
                 "image_root": str(omni_root / "OmniMedVQA"),
                 "answers_base_path": str(answers_base_dir),
-                "conv_mode": args.conv_mode,
+                # "conv_mode": args.conv_mode,
+                "conv_mode": "v1",
                 "answer_prompter": False, # Explicitly disable second generate call
                 "num_chunks": 1,
                 "chunk_idx": 0,
