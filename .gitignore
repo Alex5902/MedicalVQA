@@ -1,0 +1,46 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs and Outputs
+logs/
+*.log
+*.err
+*.out
+llava_med_output/
+results/ # Usually don't track generated results directly
+
+# Large Data & Models (Adjust paths/names if different!)
+OmniMedVQA/Images/
+llava-v1.5-7b/
+*.bin # Ignore binary files unless specifically needed (like your projector)
+# --- Keep specific projector ---
+!llava-v1.5-7b/mm_projector.bin
+
+# Cloned Repositories (Ignore entirely unless tracking specific changes within)
+# --- Keep specific modified eval files ---
+!Multi-Modality-Arena/MedicalEval/Prefix_based_Score/LLaVA-Med/llava/eval/model_med_eval_sp.py
+!Multi-Modality-Arena/MedicalEval/Prefix_based_Score/scripts/run_eval_loss.sh
+!Multi-Modality-Arena/MedicalEval/Question-answering_Score/LLaVA-Med/llava/eval/model_med_eval.py
+!Multi-Modality-Arena/MedicalEval/Question-answering_Score/scripts/run_eval.sh
+# --- Ignore the rest of the Arena repo ---
+Multi-Modality-Arena/
+
+OmniMedVQA/ # Ignoring the whole dir might be safer if only qa_items.json is needed outside
+# --- Keep the specific QA items file ---
+!OmniMedVQA/qa_items.json
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Temporary files (if any appear locally)
+*.tmp
+*~
+
+# Secrets (if any)
+*.env
+secrets.txt
