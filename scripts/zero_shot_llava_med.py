@@ -59,10 +59,10 @@ def run_evaluation_script(python_script_path: Path, args_dict: dict, model_path_
     print("\n$ " + " ".join(cmd), flush=True)
     try:
         # Set environment variable for model path, as eval scripts expect it
-        env = os.environ.copy()
-        env["MODEL_PATH"] = model_path_for_env # Use the passed model path
-        print(f"DEBUG: Setting env MODEL_PATH={env['MODEL_PATH']}") # Add debug print
-        subprocess.check_call(cmd, env=env)
+        # env = os.environ.copy()
+        # env["MODEL_PATH"] = model_path_for_env # Use the passed model path
+        # print(f"DEBUG: Setting env MODEL_PATH={env['MODEL_PATH']}") # Add debug print
+        subprocess.check_call(cmd)
         return True # Indicate success
     except subprocess.CalledProcessError as e:
         print(f"ERROR: Command failed: {' '.join(cmd)}\n{e}", file=sys.stderr)
@@ -86,7 +86,7 @@ def main():
     ap.add_argument("--vision_tower",  required=True, help="Path/ID of vision tower")
     ap.add_argument("--mm_projector",  required=True, help="Path to mm_projector.bin")
     # Add other args needed by eval scripts if any (e.g., conv_mode)
-    ap.add_argument("--conv_mode",     default="simple_legacy", help="Conversation mode for QA script")
+    ap.add_argument("--conv_mode",     default="conv_llava_v1", help="Conversation mode for QA script")
     ap.add_argument("--answers_base_path", default="llava_med_output", help="Base dir for intermediate json/jsonl")
 
     args = ap.parse_args()
@@ -128,7 +128,7 @@ def main():
             "output_subdir": "Prefix_based_Score/results", # Relative path for finding CSV later (if needed)
             "args_def": {
                 # Args defined in model_med_eval_sp.py's parser
-                "model": args.model,
+                "model_name": args.model_path,
                 "dataset_path": None, # Placeholder
                 "mm_projector": args.mm_projector,
                 "vision_tower": args.vision_tower,
@@ -154,7 +154,7 @@ def main():
                 "image_root": str(omni_root / "OmniMedVQA"),
                 "answers_base_path": str(answers_base_dir),
                 # "conv_mode": args.conv_mode,
-                "conv_mode": "v1",
+                "conv_mode": "llava_v1",
                 "answer_prompter": False, # Explicitly disable second generate call
                 "num_chunks": 1,
                 "chunk_idx": 0,
@@ -181,57 +181,55 @@ def main():
     # --- Run metrics for THIS modality ---
     print(f"\n================ Processing Modality: {target_modality} ================", flush=True)
     for config in eval_scripts_config:
-        metric_subdir = config["metric_subdir"]
-        script_name = config["script_name"]
-        script_path = arena_root / metric_subdir / script_name
-        args_for_script = config["args_def"].copy() # Get the defined args
-
-        # --- Set correct argument name for input file ---
         if config["metric_subdir"] == "Prefix_based_Score":
-            args_for_script["dataset_path"] = str(mod_json_path)
-            # Remove question_file if it accidentally exists
-            args_for_script.pop("question_file", None)
-        else: # Question-answering_Score
-            args_for_script["question_file"] = str(mod_json_path)
-            # Remove dataset_path if it accidentally exists
-            args_for_script.pop("dataset_path", None)
+            metric_subdir = config["metric_subdir"]
+            script_name = config["script_name"]
+            script_path = arena_root / metric_subdir / script_name
+            args_for_script = config["args_def"].copy() # Get the defined args
 
-        print(f"\n--- Running Metric: {metric_subdir} ---", flush=True)
-        # Pass the actual model checkpoint path for setting the environment variable
-        success = run_evaluation_script(script_path, args_for_script, args.model_path)
-
-
-        if success:
-            # Determine expected CSV name based on script convention
-            if metric_subdir == "Prefix_based_Score":
-                 # Prefix script uses args.model (--model) for filename
-                expected_csv_name = f"{args.model}.csv"
+            # --- Set correct argument name for input file ---
+            if config["metric_subdir"] == "Prefix_based_Score":
+                args_for_script["dataset_path"] = str(mod_json_path)
+                # Remove question_file if it accidentally exists
+                args_for_script.pop("question_file", None)
             else: # Question-answering_Score
-                 # QA script uses basename of --model-name (args.model_path) for filename
-                 model_tag_for_csv = os.path.basename(args.model_path).replace("/", "_")
-                 expected_csv_name = f"{model_tag_for_csv}.csv"
+                args_for_script["question_file"] = str(mod_json_path)
+                # Remove dataset_path if it accidentally exists
+                args_for_script.pop("dataset_path", None)
 
-            # Define where the script *should* have saved its CSV output
-            # This assumes scripts save to args.answers_base_path
-            src_csv = answers_base_dir / expected_csv_name
+            print(f"\n--- Running Metric: {metric_subdir} ---", flush=True)
+            # Pass the actual model checkpoint path for setting the environment variable
+            success = run_evaluation_script(script_path, args_for_script, args.model_path)
 
-            if src_csv.exists():
-                dst_dir = ensure_dir(results_dir / mod_slug)
-                dst_csv = dst_dir / f"{metric_subdir}.csv" # Rename consistently
-                print(f"Copying result from {src_csv} to {dst_csv}")
-                try:
-                    # Use shutil.move if you want to move instead of copy
-                    shutil.copy(src_csv, dst_csv)
-                    print(f"✓ {metric_subdir} → {dst_csv}")
-                    # Clean up the source CSV from answers_base_path after copying
-                    os.remove(src_csv)
-                    print(f"Removed source CSV: {src_csv}")
-                except Exception as e:
-                    print(f"ERROR: Failed to copy/remove {src_csv} to {dst_csv}: {e}", file=sys.stderr)
+
+            if success:
+                # The eval scripts name the output JSON based on the input JSON path.
+                # Input path is like: /tmp/omni_modality_slug_abc/modality_slug.json
+                # Script creates: answers_base_dir / _tmp_omni_modality_slug_abc_.json (or similar)
+                # A robust way is to find the single .json file produced in answers_base_dir
+
+                # Find the JSON file produced in answers_base_dir
+                # This assumes only ONE json file is created per run.
+                produced_files = list(answers_base_dir.glob("*.json"))
+
+                if len(produced_files) == 1:
+                    src_json = produced_files[0]
+                    dst_dir = ensure_dir(results_dir / mod_slug)
+                    # Rename consistently to Metric.json
+                    dst_json = dst_dir / f"{metric_subdir}.json"
+                    print(f"Moving result from {src_json} to {dst_json}", flush=True)
+                    try:
+                        shutil.move(src_json, dst_json) # Move instead of copy+remove
+                        print(f"✓ {metric_subdir} → {dst_json}", flush=True)
+                    except Exception as e:
+                        print(f"ERROR: Failed to move {src_json} to {dst_json}: {e}", file=sys.stderr)
+                elif len(produced_files) > 1:
+                    print(f"WARNING: Found multiple JSON files in {answers_base_dir}: {produced_files}. Cannot determine correct result file.")
+                else:
+                    print(f"WARNING: Expected result JSON not found in {answers_base_dir} after running {script_name}")
+
             else:
-                print(f"WARNING: Expected result CSV not found at {src_csv} after running {script_name}")
-        else:
-             print(f"WARNING: Evaluation script {script_name} failed for modality {target_modality}.")
+                print(f"WARNING: Evaluation script {script_name} failed for modality {target_modality}.")
 
 
     # Clean up temporary directory

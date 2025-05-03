@@ -7,13 +7,17 @@
 #SBATCH --time=72:00:00
 #SBATCH --output=logs/omni_%A_%a.out # %A=job ID, %a=array index
 #SBATCH --error=logs/omni_%A_%a.err
-#SBATCH --array=0-8              # 0 to N-1 modalities
+#SBATCH --array=2,4,6             # 0 to N-1 modalities
 
 # load your venv, etc.
 . /usr/share/Modules/init/profile.sh
 module purge
 module load cuda/12.1 python/3.9.5
-source ~/OmniMed/venv/bin/activate
+source ~/miniconda3/etc/profile.d/conda.sh
+# Or sometimes: . ~/miniconda3/bin/activate
+
+# --- Activate the NEW Conda environment ---
+conda activate omnimed_py310 
 
 # --- Define Paths ---
 PROJECT_ROOT=$HOME/OmniMed
@@ -34,6 +38,10 @@ ALL_MODALITIES=("CT(Computed Tomography)" "Dermoscopy" "Fundus Photography" "MR 
 CURRENT_MODALITY=${ALL_MODALITIES[$SLURM_ARRAY_TASK_ID]}
 
 echo "Starting evaluation for modality: $CURRENT_MODALITY (Task ID: $SLURM_ARRAY_TASK_ID) on $(date)"
+
+echo "DEBUG: Current PYTHONPATH: $PYTHONPATH"
+echo "DEBUG: Current sys.path (from python):"
+python -c "import sys; print(sys.path)"
 
 # --- Driver Script ---
 # Point to the *modified* driver script
