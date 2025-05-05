@@ -1,51 +1,45 @@
-# Specify a model to be evaluated: MiniGPT-4 BLIP2 InstructBLIP LLaMA-Adapter-v2 LLaVA Otter mPLUG-Owl VPGTrans llava-med
-#!/usr/bin/env bash
-# ------------------------------------------------------------------
-# Run Question-Answering score for a single model.
-# This script is called by the Python driver which exports:
-#   MODEL     – short tag of the model to test  (e.g. llava-med)
-#   TEST_PATH – absolute path of the filtered OmniMedVQA JSON
-# ------------------------------------------------------------------
+#!/bin/bash
 
-set -e
+# Use environment variable MODEL, default to LLaMA-Adapter-v2 if not set
+MODEL=${MODEL:-LLaMA-Adapter-v2}
+# Use environment variable TEST_PATH, error if not set
+DATA=${TEST_PATH:?"TEST_PATH environment variable not set"}
 
-: "${MODEL:?need MODEL env var}"          # fail early if missing
-: "${TEST_PATH:?need TEST_PATH env var}"
+echo "QA Script Using MODEL=$MODEL and DATA=$DATA"
 
-# ---------- paths ----------
-THIS_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-MED_EVAL_ROOT=$( dirname "$THIS_DIR" )               # …/Prefix_based_Score
-ARENA_ROOT=$( dirname "$MED_EVAL_ROOT" )             # …/MedicalEval
-# ↓ the runner is **inside the metric folder**
-LAVAMED_RUNNER="$MED_EVAL_ROOT/LLaVA-Med/llava/eval/model_med_eval.py"
-OUT_DIR="$ARENA_ROOT/results"
-mkdir -p "$OUT_DIR"
+# Set output directory relative to the script's location -> ../output/MODEL_NAME
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+OUTPUT_DIR="$SCRIPT_DIR/../output/$MODEL"
+mkdir -p "$OUTPUT_DIR"
 
-# ---------- pick the runner ----------
-case "$MODEL" in
-  MiniGPT-4)            RUN="medical_minigpt4.py" ;;
-  BLIP2)                RUN="medical_blip2.py" ;;
-  InstructBLIP)         RUN="medical_instructblip.py" ;;
-  LLaMA-Adapter-v2)     RUN="medical_llama_adapter2.py" ;;
-  LLaVA)                RUN="medical_llava.py" ;;
-  Otter)                RUN="medical_otter.py" ;;
-  mPLUG-Owl)            RUN="medical_owl.py" ;;
-  VPGTrans)             RUN="medical_vpgtrans.py" ;;
-  llava-med)            RUN="$LAVAMED_RUNNER" ;;
-  *)  echo "Unknown MODEL=$MODEL"; exit 1 ;;
-esac
-
-echo "Evaluating $MODEL on $TEST_PATH"
-
-export PYTHONPATH="$ARENA_ROOT/Question-answering_Score/LLaVA-Med:$PYTHONPATH"
-export MM_PROJECTOR_PATH="$HOME/OmniMed/llava-v1.5-7b/mm_projector.bin"
-export VISION_TOWER="openai/clip-vit-large-patch14"
-
-python "$RUN" --question-file "$TEST_PATH" --model-name "$MODEL_PATH" --mm-projector "$MODEL_PATH/mm_projector.bin" --vision-tower "$VISION_TOWER" --answers_base_path "$OUT_DIR"
-
-if [[ -f "$OUT_DIR/${MODEL}.csv" ]]; then
-    echo "result stored in $OUT_DIR/${MODEL}.csv"
+# Logic based on MODEL env var
+if [ "$MODEL" == 'llava-med' ]; then
+    echo "Evaluating LLaVA-Med QA"
+    # Adjust path and arguments for the specific LLaVA-Med QA script
+    python_script="../LLaVA-Med/llava/eval/model_med_eval.py" # Relative path
+    if [ ! -f "$SCRIPT_DIR/$python_script" ]; then
+        echo "ERROR: Python script not found at $SCRIPT_DIR/$python_script"
+        exit 1
+    fi
+    # Check llava-med script args - it uses --question-file and --answers-base-path
+    python "$SCRIPT_DIR/$python_script" \
+        --question-file "$DATA" \
+        --answers-base-path "$OUTPUT_DIR" \
+        # Add other necessary args like --model-name, --vision-tower, --mm-projector if needed by this script
 else
-    echo "runner finished but no CSV produced"
+    echo "Evaluating $MODEL QA using eval_medical.py"
+    # Adjust path for the generic eval_medical.py script
+    python_script="../eval_medical.py" # Relative path
+    if [ ! -f "$SCRIPT_DIR/$python_script" ]; then
+        echo "ERROR: Python script not found at $SCRIPT_DIR/$python_script"
+        exit 1
+    fi
+    # Check eval_medical.py args - it uses --model_name and --dataset_path
+    python "$SCRIPT_DIR/$python_script" \
+        --model_name "$MODEL" \
+        --dataset_path "$DATA" \
+        --answer_path "$OUTPUT_DIR" # Pass the output directory
+
 fi
 
+exit $? # Exit with the python script's exit code
