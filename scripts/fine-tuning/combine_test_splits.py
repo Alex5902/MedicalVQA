@@ -138,4 +138,4 @@ if __name__ == "__main__":
 #     --base-split-dir ./finetuning_datasets/OmniMedVQA_Splits_ImgLevel \
 #     --modalities "Fundus_Photography" "X-Ray" "Microscopy_Images" \
 #     --output-dir ./finetuning_datasets/OmniMedVQA_CombinedTest \
-#     --dummy-image-path "Images/dummy/dummy_black_336.png" # Or your preferred dummy path
+#     --dummy-image-path "Images/DUMMY/dummy_black_336.png" # Or your preferred dummy path
