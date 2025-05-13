@@ -17,6 +17,7 @@ from types import MethodType
 from io import BytesIO # Not used if images are loaded from path
 import argparse
 import sys # For sys.exit
+import traceback
 
 device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
 
@@ -269,17 +270,36 @@ def test(model, vis_processors, dataset_path_str=None, model_name_for_output='bl
 
 def parse_args():
     parser = argparse.ArgumentParser(description="BLIP-2 Prefix Scoring Evaluation")
-    parser.add_argument("--dataset_path", type=str, required=True, help="Path to the JSON dataset file for a specific modality")
-    parser.add_argument("--answer_path", type=str, required=True, help="Directory to save output JSON results")
-    parser.add_argument("--image_root", type=str, required=True, help="Root directory containing the 'Images' folder (e.g., path to OmniMedVQA/OmniMedVQA/)")
-    parser.add_argument("--model_name_tag", type=str, default="blip2_t5_pretrain_flant5xl", help="Base model name for output (e.g., blip2_t5_flant5xl or blip2_t5_flant5xl_finetuned_fundus)")
-    parser.add_argument("--checkpoint_path", type=str, default=None, help="Path to the fine-tuned model checkpoint (.pth file), if evaluating a fine-tuned model.")
-    # Add arguments for base model name and type if you want to make them configurable
-    # parser.add_argument("--base_model_name", type=str, default="blip2_t5")
-    # parser.add_argument("--base_model_type", type=str, default="pretrain_flant5xl")
-    parser.add_argument("--prompt_idx", type=int, default=4, help="Index of the prompt to use from load_prompt function.")
+    
+    # Temporarily make them not required to see what happens
+    parser.add_argument("--dataset-path", type=str, default=None, help="Path to the JSON dataset file for a specific modality")
+    parser.add_argument("--answer-path", type=str, default=None, help="Directory to save output JSON results")
+    parser.add_argument("--image-root", type=str, default=None, help="Root directory containing the 'Images' folder")
+    
+    parser.add_argument("--model-name-tag", type=str, default="blip2_t5_pretrain_flant5xl", help="Base model name for output")
+    parser.add_argument("--checkpoint-path", type=str, default=None, help="Path to the fine-tuned model checkpoint")
+    parser.add_argument("--prompt-idx", type=int, default=4, help="Index of the prompt to use")
 
-    args = parser.parse_args()
+    print(f"DEBUG medical_blip2_finetuned.py: sys.argv before parse_args: {sys.argv}", flush=True)
+    
+    # Try parsing known args first, in case unknown args are causing issues
+    args, unknown = parser.parse_known_args() 
+    
+    print(f"DEBUG medical_blip2_finetuned.py: Parsed args: {args}", flush=True)
+    if unknown:
+        print(f"DEBUG medical_blip2_finetuned.py: Unknown args: {unknown}", flush=True)
+
+    # Add checks to ensure required args were actually passed, even if not "required" by argparse temporarily
+    if args.dataset_path is None:
+        print("ERROR_DEBUG: --dataset_path was not parsed correctly or not provided!", file=sys.stderr)
+        # sys.exit(1) # Optionally exit if a truly required arg is missing
+    if args.answer_path is None:
+        print("ERROR_DEBUG: --answer_path was not parsed correctly or not provided!", file=sys.stderr)
+        # sys.exit(1)
+    if args.image_root is None:
+        print("ERROR_DEBUG: --image_root was not parsed correctly or not provided!", file=sys.stderr)
+        # sys.exit(1)
+        
     return args
 
 def run(args):
