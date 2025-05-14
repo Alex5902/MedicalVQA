@@ -387,6 +387,18 @@ if __name__ == "__main__":
             # Calculate average probability margin for correct answers
             correct_items_with_margin = df.loc[df['is_correct_raw'] & df['prob_margin'].notna(), 'prob_margin']
             avg_prob_margin_for_correct = correct_items_with_margin.mean() if not correct_items_with_margin.empty else np.nan
+
+            # Calculate average probability margin for INCORRECT answers 
+            incorrect_items_with_margin = df.loc[(~df['is_correct_raw']) & df['prob_margin'].notna(), 'prob_margin'] # Note the ~ for NOT correct
+            avg_prob_margin_for_incorrect = incorrect_items_with_margin.mean() if not incorrect_items_with_margin.empty else np.nan
+
+            # Average top confidence (softmax probability) for CORRECT answers 
+            correct_confidences = df.loc[df['is_correct_raw'] & df['top_confidence'].notna(), 'top_confidence']
+            avg_top_confidence_correct = correct_confidences.mean() if not correct_confidences.empty else np.nan
+
+            # Average top confidence (softmax probability) for INCORRECT answers 
+            incorrect_confidences = df.loc[(~df['is_correct_raw']) & df['top_confidence'].notna(), 'top_confidence']
+            avg_top_confidence_incorrect = incorrect_confidences.mean() if not incorrect_confidences.empty else np.nan
             
             summary_data[df_name_key] = {
                 "raw_accuracy": df['is_correct_raw'].mean(),
@@ -394,8 +406,11 @@ if __name__ == "__main__":
                 "adaptive_margin_accuracy_from_raw_scores": df['is_correct_adaptive_margin'].mean(), # Clarified name
                 "average_top_confidence_softmax_prob": df['top_confidence'].mean(), # Clarified name
                 "average_entropy": df['entropy'].mean(),
-                "global_average_prob_margin": global_avg_prob_margin, # <<< NEW METRIC
-                "average_prob_margin_for_correct_answers": avg_prob_margin_for_correct, # <<< NEW METRIC
+                "global_average_prob_margin": global_avg_prob_margin, 
+                "average_prob_margin_for_correct_answers": avg_prob_margin_for_correct,
+                "average_prob_margin_for_incorrect_answers": avg_prob_margin_for_incorrect,
+                "average_top_confidence_for_correct_answers": avg_top_confidence_correct,   
+                "average_top_confidence_for_incorrect_answers": avg_top_confidence_incorrect,
                 "count": len(df)
             }
             print(f"\n--- {df_name_key.replace('_', ' ').title()} Summary ---")
@@ -425,14 +440,14 @@ if __name__ == "__main__":
 
 
 # /home/alex.ia/miniconda3/envs/blip2_lavis_env/bin/python /home/alex.ia/OmniMed/scripts/fine-tuning/analyse_finetune_scores.py \
-#     --real-results "/home/alex.ia/OmniMed/results_eval_ft/blip2-flant5xl-ft-fundus-ep5_real_prefix/fundus_photography/fundus_photography_prefix_results.json" \
-#     --dummy-results "/home/alex.ia/OmniMed/results_eval_ft/dummy/blip2-flant5xl-ft-fundus-ep5_dummy_prefix/fundus_photography/fundus_photography_prefix_results.json" \
-#     --output-dir "/home/alex.ia/OmniMed/results_eval_ft/analysis_metrics/fundus_photography_ep5" \
-#     --real-csv "real_metrics_fundus_ft_ep5.csv" \
-#     --dummy-csv "dummy_metrics_fundus_ft_ep5.csv" \
-#     --compare-csv "comparison_metrics_fundus_ft_ep5.csv" \
-#     --summary-json "summary_metrics_fundus_ft_ep5.json" \
-#     --plot-output "confidence_drop_plot_fundus_ft_ep5.png" \
-#     --margin-hist-output "margin_histogram_fundus_ft_ep5.png" \
-#     --acc-conf-curve-real "acc_vs_conf_real_fundus_ft_ep5.png" \
-#     --acc-conf-curve-dummy "acc_vs_conf_dummy_fundus_ft_ep5.png"
+#     --real-results "/home/alex.ia/OmniMed/results_eval_ft/blip2-flant5xl-ft-fundus-ep5_real_prefix/x-ray/x-ray_prefix_results.json" \
+#     --dummy-results "/home/alex.ia/OmniMed/results_eval_ft/dummy/blip2-flant5xl-ft-fundus-ep5_dummy_prefix/x-ray/x-ray_prefix_results.json" \
+#     --output-dir "/home/alex.ia/OmniMed/results_eval_ft/analysis_metrics/x-ray_ep5" \
+#     --real-csv "real_metrics_x-ray_ft_ep5.csv" \
+#     --dummy-csv "dummy_metrics_x-ray_ft_ep5.csv" \
+#     --compare-csv "comparison_metrics_x-ray_ft_ep5.csv" \
+#     --summary-json "summary_metrics_x-ray_ft_ep5.json" \
+#     --plot-output "confidence_drop_plot_x-ray_ft_ep5.png" \
+#     --margin-hist-output "margin_histogram_x-ray_ft_ep5.png" \
+#     --acc-conf-curve-real "acc_vs_conf_real_x-ray_ft_ep5.png" \
+#     --acc-conf-curve-dummy "acc_vs_conf_dummy_x-ray_ft_ep5.png"
