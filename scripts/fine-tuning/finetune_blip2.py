@@ -403,6 +403,70 @@ def main(args):
         device=ddp_device
     )
 
+    if args.load_checkpoint:
+        if not os.path.exists(args.load_checkpoint):
+            if is_main_process:
+                print(f"FATAL: Checkpoint file not found at {args.load_checkpoint}", file=sys.stderr)
+            # Ensure all processes are aware of the failure before exiting
+            if dist.is_initialized(): # Check if DDP is initialized before using barrier/cleanup
+                dist.barrier()
+                cleanup_ddp()
+            sys.exit(1)
+
+        if is_main_process:
+            print(f"Loading checkpoint weights from: {args.load_checkpoint}")
+        
+        try:
+            # Load checkpoint to CPU first to avoid potential GPU OOM on rank 0,
+            # especially before DDP model distribution.
+            # The model object 'model' is already on 'ddp_device'.
+            checkpoint_state_dict = torch.load(args.load_checkpoint, map_location='cpu')
+
+            # Your saving logic `torch.save(model.module.state_dict() if isinstance(model, DDP) else model.state_dict(), ...)`
+            # means the checkpoint_state_dict is the raw state_dict without the 'module.' prefix.
+            # However, to be robust, we can strip 'module.' if it somehow exists.
+            model_state_to_load = {}
+            for k, v in checkpoint_state_dict.items():
+                name = k[7:] if k.startswith('module.') else k  # remove `module.` prefix if present
+                model_state_to_load[name] = v
+            
+            # Load the state dict. Using strict=False can be more informative if there are mismatches.
+            # For sequential fine-tuning of the exact same architecture, strict=True should ideally pass.
+            # If strict=False, check the load_msg carefully.
+            load_msg = model.load_state_dict(model_state_to_load, strict=False)
+
+            if is_main_process:
+                print(f"Successfully loaded checkpoint weights. Load message: {load_msg}")
+                if load_msg.missing_keys:
+                    print(f"WARNING: Missing keys during checkpoint load: {load_msg.missing_keys}")
+                if load_msg.unexpected_keys:
+                    print(f"WARNING: Unexpected keys during checkpoint load: {load_msg.unexpected_keys}")
+                # If many missing/unexpected keys, it might indicate a problem.
+                # For your case (loading a model saved by this script), it should be clean.
+            
+            # Ensure model is on the correct device after loading state_dict (it should be, but good practice)
+            model.to(ddp_device)
+
+        except Exception as e:
+            if is_main_process:
+                print(f"FATAL: Failed to load checkpoint {args.load_checkpoint}: {e}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+            if dist.is_initialized():
+                dist.barrier()
+                cleanup_ddp()
+            sys.exit(1)
+        
+        # Barrier to ensure all DDP processes have loaded the checkpoint (or failed together)
+        # before proceeding with model modifications or training.
+        if dist.is_initialized():
+            dist.barrier()
+        if is_main_process:
+            print("Checkpoint loaded and model synchronized across DDP processes.")
+
+    else:
+        if is_main_process:
+            print("No checkpoint provided via --load_checkpoint. Starting from base pre-trained model weights.")
+
     if is_main_process:
         print(f"Converting entire model to float32 before AMP context.")
     model = model.to(dtype=torch.float32)
@@ -775,6 +839,7 @@ def main(args):
         # --- Add hooks for key Qformer modules ---
         # Qformer Bert Embeddings LayerNorm
         "Qformer_bert_embeddings_norm_out": "Qformer.bert.embeddings.LayerNorm",
+        "Qformer_output_before_t5_proj": "Qformer",
         # Qformer Cross Attention Output LayerNorm (where vision meets Qformer)
         # There are 6 layers of cross-attention (layers 0, 2, 4, 6, 8, 10 in BertEncoder.layer)
         "Qformer_crossattn_layer0_out_norm_out": "Qformer.bert.encoder.layer.0.crossattention.output.LayerNorm",
@@ -793,6 +858,13 @@ def main(args):
         "t5_proj_out": "t5_proj",
 
         # --- Add hooks for key T5 modules ---
+        # --- T5 Encoder Internals ---
+        "t5_encoder_input_embeds": "t5_model.encoder.embed_tokens", # Output of token embedding layer
+        "t5_encoder_block_0_attn_out": "t5_model.encoder.block.0.layer.0.SelfAttention", # After self-attention in first T5 enc block
+        "t5_encoder_block_0_ffn_out": "t5_model.encoder.block.0.layer.1.DenseReluDense", # After FFN in first T5 enc block
+        # Add more T5 encoder blocks if needed (e.g., a middle one, the last one before final_layer_norm)
+        "t5_encoder_block_LAST_attn_out": f"t5_model.encoder.block.{model.t5_model.config.num_layers - 1}.layer.0.SelfAttention",
+        "t5_encoder_block_LAST_ffn_out": f"t5_model.encoder.block.{model.t5_model.config.num_layers - 1}.layer.1.DenseReluDense",
         # T5 Encoder final LayerNorm
         "t5_encoder_final_norm_out": "t5_model.encoder.final_layer_norm",
         # T5 Decoder Cross Attention LayerNorm (where Qformer/visual info meets T5 decoder)
@@ -1209,6 +1281,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_model_name", type=str, default="blip2_t5", help="Base LAVIS model name (e.g., blip2_t5, blip2_opt).")
     parser.add_argument("--base_model_type", type=str, default="pretrain_flant5xl", help="Specific model type for LAVIS (e.g., pretrain_flant5xl, pretrain_opt2.7b).")
     parser.add_argument("--unfreeze_all", action="store_true", help="If set, unfreeze all parameters for full fine-tuning. Otherwise, tunes Q-Former and t5_proj by default.")
+    parser.add_argument("--load_checkpoint", type=str, default=None, help="Path to a checkpoint .pth file to load weights from after initializing the base model.")
 
     # Data args
     parser.add_argument("--train_json_path", type=str, required=True, help="Path to the training JSON file.")
