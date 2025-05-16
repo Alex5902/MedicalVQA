@@ -77,6 +77,9 @@ def main():
     ap.add_argument("--batch-size", type=int, default=4, help="Batch size (used for QA evaluation, and potentially by prefix if adapted)")
     ap.add_argument("--prompt_idx", type=int, default=4, help="Prompt index for prefix scoring (passed to medical_blip2_finetuned.py)")
 
+    ap.add_argument("--lora_t5_adapter_path", default=None, help="Path to the T5 LoRA adapter directory for evaluation.")
+    ap.add_argument("--lora_qformer_adapter_path", default=None, help="Path to the Q-Former LoRA adapter directory for evaluation.")
+
 
     args = ap.parse_args()
 
@@ -108,7 +111,7 @@ def main():
         print("Configuring for Prefix Scoring...")
         script_subdir = "Prefix_based_Score"
         # --- Point to your new/modified script ---
-        script_filename = "medical_blip2_finetuned.py" # Or whatever you named your modified version
+        script_filename = "medical_blip2_lora.py" # Or whatever you named your modified version
         
         target_script_path = arena_root / script_subdir / script_filename
         if not target_script_path.exists():
@@ -122,7 +125,11 @@ def main():
             "image_root": image_base_path_str,
             "model_name_tag": effective_model_name_tag_for_script, # Pass the tag
             "checkpoint_path": args.ft_checkpoint_path, # Pass the checkpoint path
-            "prompt_idx": args.prompt_idx # Pass prompt index
+            "prompt_idx": args.prompt_idx, # Pass prompt index
+            "lora_t5_adapter_path": args.lora_t5_adapter_path,
+            "lora_qformer_adapter_path": args.lora_qformer_adapter_path,
+            "base_model_name": "blip2_t5", # Or make this configurable via lora_eval.py args
+            "base_model_type": "pretrain_flant5xl" # Or make this configurable
         }
         results_subdir_suffix = "prefix"
         run_title = f"{args.model_tag} Prefix Scoring"
