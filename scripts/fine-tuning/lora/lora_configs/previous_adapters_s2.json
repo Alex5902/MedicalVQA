@@ -1,0 +1,12 @@
+[
+    {
+      "path": "/home/alex.ia/OmniMed/lora_finetuned_adapters_seq/stage1_fundus_lora/lora_adapters/fundus_t5_final",
+      "name": "fundus_t5",
+      "component": "t5"
+    },
+    {
+      "path": "/home/alex.ia/OmniMed/lora_finetuned_adapters_seq/stage1_fundus_lora/lora_adapters/fundus_qformer_final",
+      "name": "fundus_qformer",
+      "component": "qformer"
+    }
+  ]
