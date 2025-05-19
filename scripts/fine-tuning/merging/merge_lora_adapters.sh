@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=merge_qf_knots_baseline
-#SBATCH --partition=46-6,48-4
+#SBATCH --partition=48-6,48-4
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8          # Adjust based on expected CPU load
@@ -36,7 +36,7 @@ echo "CONDA_PREFIX: $CONDA_PREFIX"
 
 # --- Define Paths ---
 PROJECT_ROOT=$HOME/OmniMed # Or your project root
-MERGE_SCRIPT_PATH=$PROJECT_ROOT/scripts/fine-tuning/lora/merge_lora_adapters.py # Or your script path
+MERGE_SCRIPT_PATH=$PROJECT_ROOT/scripts/fine-tuning/merging/merge_lora_adapters.py
 PYTHON_EXEC=$(which python)
 
 KNOTS_REPO_ACTUAL_PATH="$PROJECT_ROOT/KnOTS" 

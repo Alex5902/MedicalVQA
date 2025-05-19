@@ -134,6 +134,11 @@ def merge_qformer_knots_baseline(
             )
             qformer_for_task_peft.to(device) # LoRAHandler might do operations on device
             qformer_for_task_peft.eval()
+            
+            print(f"DEBUG: Keys in qformer_for_task_peft.state_dict() for adapter {adapter_path}:")
+            for k_debug in list(qformer_for_task_peft.state_dict().keys()):
+                if "lora" in k_debug: # Only print LoRA related keys
+                    print(f"  {k_debug}")
 
             handler = LoRAHandler(qformer_for_task_peft) # LoRAHandler expects the PeftModel
             delta_w_sd = handler.get_ft_parameters() # Returns OrderedDict {layer_base_name: DeltaW_matrix}
@@ -195,16 +200,17 @@ def merge_qformer_knots_baseline(
     # So, our handlers should just return the state_dicts we give them.
     
     svd_merger = SVDMerger(
-        finetuned_models=dummy_finetuned_models_for_svdmerger, # List of GeneralHandler(DeltaW_sd_i)
-        pretrained_model=dummy_pretrained_model_for_svdmerger, # GeneralHandler(zeros_sd)
-        param_handler=KnotsGeneralHandler, # The class itself
-        device=device, # SVD operations will happen on this device
-        merge_config=knots_svd_merge_config # Initial merge config, might be updated later
+        finetuned_models=task_qformer_delta_w_sds,  # Pass list of state_dicts directly
+        pretrained_model=ptm_zeros_sd,              # Pass state_dict directly
+        param_handler=KnotsGeneralHandler,          # The class that can init with state_dicts
+        device=device,
+        merge_config=knots_svd_merge_config
     )
 
     # The `transform` method calculates SVD and stores ingredients
     # It uses `self.get_task_directions` which is FT - PTM.
     # Since our "FT" is DeltaW and "PTM" is zeros, task_directions will be DeltaW.
+    knots_svd_merge_config['svd_device'] = 'cpu'
     print("  Calling SVDMerger.transform() to compute SVD ingredients...")
     svd_merger.transform(merge_config=knots_svd_merge_config) # This populates svd_merger.ingredients
     print("  SVDMerger.transform() complete.")
@@ -339,32 +345,125 @@ def merge_qformer_knots_baseline(
     # Prepare the state_dict to load into this PeftModel
     # PEFT keys are typically `base_model.model.{original_module_path}.lora_A.default.weight`
     final_peft_state_dict_to_load = OrderedDict()
-    for key_a, tensor_a in merged_lora_A_sd.items():
-        # key_a is like 'bert.encoder.layer.0.attention.self.query.lora_A.default.weight'
-        # Prepend `base_model.model.` if PEFT structure requires it.
-        # For a component like QFormer, it might be just the path within QFormer.
-        # Let's check how LoRAHandler names things. LoRAHandler uses keys like 'bert.encoder...'
-        # When loading into a PeftModel(Qformer, config), the keys should match those inside Qformer.
-        final_peft_state_dict_to_load[key_a] = tensor_a
-    for key_b, tensor_b in merged_lora_B_sd.items():
-        final_peft_state_dict_to_load[key_b] = tensor_b
+    adapter_name_for_peft_keys = "merged_knots_qformer_baseline" # This MUST match the adapter_name used in get_peft_model
+
+    # Combine merged_lora_A_sd and merged_lora_B_sd for easier iteration
+    temp_combined_factorized_sd = OrderedDict()
+    temp_combined_factorized_sd.update(merged_lora_A_sd)
+    temp_combined_factorized_sd.update(merged_lora_B_sd)
+
+    print(f"\nDEBUG: Converting factorized LoRA keys to PEFT state_dict keys for adapter '{adapter_name_for_peft_keys}':")
+
+    for key_from_factorization, tensor_val in temp_combined_factorized_sd.items():
+        # key_from_factorization is like: "bert.encoder.layer.0.attention.self.query.lora_A.default.weight"
         
+        parts = key_from_factorization.split('.')
+        
+        # Robustly find "lora_A" or "lora_B" and extract the base module path
+        lora_type_str = None # Will be "A" or "B"
+        lora_marker_idx = -1
+
+        for i, part_name in enumerate(parts):
+            if part_name == "lora_A":
+                lora_type_str = "A"
+                lora_marker_idx = i
+                break
+            elif part_name == "lora_B":
+                lora_type_str = "B"
+                lora_marker_idx = i
+                break
+        
+        if lora_type_str is None or lora_marker_idx == -1:
+            print(f"  WARNING: Could not parse lora_A/B from key: '{key_from_factorization}'. Skipping this key.")
+            continue
+            
+        # The module path targeted by LoRA (e.g., "bert.encoder.layer.0.attention.self.query")
+        target_module_path = ".".join(parts[:lora_marker_idx])
+        
+        # Ensure the rest of the key matches ".default.weight"
+        expected_suffix = [f"lora_{lora_type_str}", "default", "weight"]
+        actual_suffix = parts[lora_marker_idx:]
+        
+        if actual_suffix != expected_suffix:
+            print(f"  WARNING: Key '{key_from_factorization}' does not have the expected '.lora_[A/B].default.weight' suffix. Actual suffix: {actual_suffix}. Skipping.")
+            continue
+
+        # Construct the key that PeftModel.load_state_dict expects for the new adapter.
+        # Format for PeftModel created from a submodule (like QFormer):
+        # "base_model.model.{TARGET_MODULE_PATH}.lora_{A_or_B}.{ADAPTER_NAME}.weight"
+        peft_key = f"base_model.model.{target_module_path}.lora_{lora_type_str}.{adapter_name_for_peft_keys}.weight"
+        
+        final_peft_state_dict_to_load[peft_key] = tensor_val.cpu() # Ensure tensor is on CPU
+        print(f"  Mapping: '{key_from_factorization}' -> '{peft_key}'")
+
+    if not final_peft_state_dict_to_load:
+        raise ValueError("Failed to construct any PEFT keys for loading. Check factorization and key parsing.")
+    
+    print(f"DEBUG: Example PEFT keys prepared for direct parameter setting: {list(final_peft_state_dict_to_load.keys())[:5]}")
+    
+    # Directly set the LoRA parameters in the merged_qformer_peft_model
+    successful_sets = 0
+    with torch.no_grad():
+        for peft_key_name, tensor_value in final_peft_state_dict_to_load.items():
+            # peft_key_name is like "base_model.model.module.path.lora_A.adapter.weight"
+            
+            current_module = merged_qformer_peft_model
+            key_parts = peft_key_name.split('.')
+            
+            param_object_found = False
+            try:
+                # Navigate to the parent module of the parameter
+                for part_idx, part_name in enumerate(key_parts[:-1]): # Iterate up to the second to last part
+                    if hasattr(current_module, part_name):
+                        current_module = getattr(current_module, part_name)
+                    else:
+                        print(f"  ERROR: Navigation failed. Module '{current_module.__class__.__name__}' has no attribute '{part_name}' for key '{peft_key_name}'.")
+                        current_module = None # Mark as failed
+                        break
+                
+                if current_module is not None:
+                    param_name_leaf = key_parts[-1] # The actual parameter name (e.g., 'weight')
+                    if hasattr(current_module, param_name_leaf):
+                        param_to_set = getattr(current_module, param_name_leaf)
+                        if isinstance(param_to_set, torch.nn.Parameter):
+                            param_to_set.data.copy_(tensor_value.to(param_to_set.device, param_to_set.dtype))
+                            # print(f"  Successfully set parameter: {peft_key_name}") # Can be verbose
+                            successful_sets += 1
+                            param_object_found = True
+                        else:
+                            print(f"  ERROR: Target '{peft_key_name}' is not a Parameter. Found type: {type(param_to_set)}")
+                    else:
+                        print(f"  ERROR: Parent module '{current_module.__class__.__name__}' has no parameter named '{param_name_leaf}' for key '{peft_key_name}'.")
+                
+                if not param_object_found:
+                     print(f"  Failed to set parameter: {peft_key_name}")
+
+            except Exception as e_set: # Catch any other exception during navigation/setting
+                print(f"  ERROR: General exception while trying to set parameter '{peft_key_name}': {e_set}")
+                traceback.print_exc(file=sys.stderr)
+
+
+    print(f"Directly updated {successful_sets}/{len(final_peft_state_dict_to_load)} LoRA parameters in the new PeftModel.")
+    if successful_sets != len(final_peft_state_dict_to_load):
+        print("WARNING: Not all LoRA parameters were successfully set. Check DEBUG messages above.")
+
+
     # Mark non-LoRA parameters as not trainable for the saved adapter.
-    # This is mostly for the adapter itself; the base Q-Former is frozen anyway.
+    # This part is still good to ensure correct state for saving.
     for n, p in merged_qformer_peft_model.named_parameters():
-        if "lora_" not in n: # Check if this is the right way to identify non-LoRA params in PEFT model
-            p.requires_grad = False
+        # For the new adapter, only its LoRA weights should have requires_grad=True
+        if adapter_name_for_peft_keys in n and "lora" in n:
+            p.requires_grad = True
         else:
-            p.requires_grad = True # Ensure LoRA params are seen as part of the adapter
+            p.requires_grad = False
+            
+    # Verify requires_grad status
+    # print("DEBUG: Parameter requires_grad status after update:")
+    # for n, p in merged_qformer_peft_model.named_parameters():
+    #     if "lora" in n and adapter_name_for_peft_keys in n:
+    #         print(f"  {n}: {p.requires_grad}")
 
-    load_msg = merged_qformer_peft_model.load_state_dict(final_peft_state_dict_to_load, strict=False)
-    print(f"Load message for merged LoRA weights into new PeftModel: {load_msg}")
-    if load_msg.missing_keys:
-        print(f"  CRITICAL WARNING: Missing keys when loading merged LoRA weights: {load_msg.missing_keys}", file=sys.stderr)
-    if load_msg.unexpected_keys:
-        print(f"  CRITICAL WARNING: Unexpected keys when loading merged LoRA weights: {load_msg.unexpected_keys}", file=sys.stderr)
-
-    return merged_qformer_peft_model, qformer_attr # Return the PEFT Q-Former and its attribute name
+    return merged_qformer_peft_model, qformer_attr
 
 
 def main(args):
